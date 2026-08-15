@@ -1,19 +1,27 @@
 import { Avatar } from "./Avatar";
 import { formatTime, shouldGroup } from "../utils/helpers";
+import type { ChatMessage, DeliveryStatus } from "../types";
 
-function DeliveryBadge({ status }) {
-  const map = {
-    sending  : { icon: "⋯",  color: "#888" },
-    sent     : { icon: "✓",  color: "#7db5f0" },
-    delivered: { icon: "✓✓", color: "#4caf7d" },
-    failed   : { icon: "✗",  color: "#e55" },
-  };
-  const s = map[status];
+const DELIVERY_MAP: Record<DeliveryStatus, { icon: string; color: string }> = {
+  sending: { icon: "⋯", color: "#888" },
+  sent: { icon: "✓", color: "#7db5f0" },
+  delivered: { icon: "✓✓", color: "#4caf7d" },
+  failed: { icon: "✗", color: "#e55" },
+};
+
+function DeliveryBadge({ status }: { status?: DeliveryStatus }) {
+  const s = status ? DELIVERY_MAP[status] : undefined;
   if (!s) return null;
   return <span style={{ fontSize: 10, color: s.color, marginTop: 2 }}>{s.icon}</span>;
 }
 
-export function MessageBubble({ message, prevMessage, myId }) {
+interface MessageBubbleProps {
+  message: ChatMessage;
+  prevMessage?: ChatMessage;
+  myId: string | null;
+}
+
+export function MessageBubble({ message, prevMessage, myId }: MessageBubbleProps) {
   // ── system event ─────────────────────────────────────────────────────────────
   if (message.type === "system") {
     return (
@@ -29,7 +37,7 @@ export function MessageBubble({ message, prevMessage, myId }) {
     );
   }
 
-  const isMine  = message.userId === myId || message.isMine;
+  const isMine = message.userId === myId || message.isMine;
   const grouped = shouldGroup(prevMessage, message);
 
   return (

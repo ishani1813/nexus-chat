@@ -1,16 +1,23 @@
 import { useState } from "react";
 import { ROOM_META } from "../utils/helpers";
+import type { ConnState, RoomId } from "../types";
 
-export function JoinScreen({ rooms, onJoin, connState }) {
+interface JoinScreenProps {
+  rooms: RoomId[];
+  onJoin: (username: string, room: RoomId) => void;
+  connState: ConnState;
+}
+
+export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
   const [username, setUsername] = useState("");
-  const [room, setRoom]         = useState("general");
-  const [error, setError]       = useState("");
+  const [room, setRoom] = useState<RoomId>("general");
+  const [error, setError] = useState("");
 
   const handleJoin = () => {
     const name = username.trim();
-    if (!name)          { setError("Please enter a username."); return; }
-    if (name.length < 2){ setError("At least 2 characters."); return; }
-    if (name.length > 24){ setError("Max 24 characters."); return; }
+    if (!name) { setError("Please enter a username."); return; }
+    if (name.length < 2) { setError("At least 2 characters."); return; }
+    if (name.length > 24) { setError("Max 24 characters."); return; }
     if (connState !== "connected") { setError("Not connected yet — please wait."); return; }
     setError("");
     onJoin(name, room);
@@ -79,7 +86,7 @@ export function JoinScreen({ rooms, onJoin, connState }) {
               fontSize: 14, outline: "none",
             }}
             onFocus={e => e.target.style.borderColor = "rgba(91,99,248,0.55)"}
-            onBlur={e  => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+            onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
           />
           {error && <p style={{ fontSize: 12, color: "#e55", marginTop: 5 }}>{error}</p>}
         </div>
@@ -92,7 +99,7 @@ export function JoinScreen({ rooms, onJoin, connState }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             {rooms.map(r => {
               const meta = ROOM_META[r] || { icon: "💬", desc: "" };
-              const sel  = r === room;
+              const sel = r === room;
               return (
                 <button key={r} onClick={() => setRoom(r)} style={{
                   padding: "10px 12px", borderRadius: 9, textAlign: "left", cursor: "pointer",

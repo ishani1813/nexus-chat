@@ -1,33 +1,36 @@
 import { useState, useCallback, useRef } from "react";
-import { useWebSocket }       from "./hooks/useWebSocket";
-import { JoinScreen }         from "./components/JoinScreen";
-import { Sidebar }            from "./components/Sidebar";
-import { ChatWindow }         from "./components/ChatWindow";
-import { MetricsDashboard }   from "./components/MetricsDashboard";
-import { genClientId }        from "./utils/helpers";
+import { useWebSocket } from "./hooks/useWebSocket";
+import { JoinScreen } from "./components/JoinScreen";
+import { Sidebar } from "./components/Sidebar";
+import { ChatWindow } from "./components/ChatWindow";
+import { MetricsDashboard } from "./components/MetricsDashboard";
+import { genClientId } from "./utils/helpers";
+import type { ChatMessage, Metrics, RoomId, ServerMessage, TypingUser, UserSummary } from "./types";
+
+type Phase = "join" | "chat";
 
 export default function App() {
-  const [phase,         setPhase]         = useState("join");
-  const [showMetrics,   setShowMetrics]   = useState(false);
+  const [phase, setPhase] = useState<Phase>("join");
+  const [showMetrics, setShowMetrics] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
 
-  const [myUsername,  setMyUsername]  = useState(null);
-  const [currentRoom, setCurrentRoom] = useState("general");
-  const [rooms]                       = useState(["general","engineering","random","design"]);
-  const [messages,    setMessages]    = useState([]);
-  const [users,       setUsers]       = useState([]);
-  const [typingUsers, setTypingUsers] = useState([]);
-  const [metrics,     setMetrics]     = useState(null);
+  const [myUsername, setMyUsername] = useState<string | null>(null);
+  const [currentRoom, setCurrentRoom] = useState<RoomId>("general");
+  const [rooms] = useState<RoomId[]>(["general", "engineering", "random", "design"]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [users, setUsers] = useState<UserSummary[]>([]);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
 
-  const typingTimers = useRef(new Map());
+  const typingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-  const handleMessage = useCallback((msg) => {
+  const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
 
       case "joined": {
         setCurrentRoom(msg.room);
         setUsers(msg.users || []);
-        setMessages((msg.history || []).map(m => ({ ...m, deliveryStatus: "delivered" })));
+        setMessages((msg.history || []).map(m => ({ ...m, deliveryStatus: "delivered" as const })));
         setTypingUsers([]);
         if (msg.metrics) setMetrics(msg.metrics);
         setPhase("chat");
@@ -37,13 +40,13 @@ export default function App() {
       case "room_switched": {
         setCurrentRoom(msg.room);
         setUsers(msg.users || []);
-        setMessages((msg.history || []).map(m => ({ ...m, deliveryStatus: "delivered" })));
+        setMessages((msg.history || []).map(m => ({ ...m, deliveryStatus: "delivered" as const })));
         setTypingUsers([]);
         break;
       }
 
       case "message": {
-        const incoming = { ...msg.message, deliveryStatus: "delivered" };
+        const incoming: ChatMessage = { ...msg.message, deliveryStatus: "delivered" };
         setMessages(prev => {
           if (prev.some(m => m.id === incoming.id || (m.clientMsgId && m.clientMsgId === incoming.clientMsgId))) return prev;
           return [...prev, incoming];
@@ -54,7 +57,7 @@ export default function App() {
       case "message_ack": {
         setMessages(prev => prev.map(m =>
           m.clientMsgId === msg.clientMsgId
-            ? { ...m, id: msg.serverId, deliveryStatus: msg.delivered > 0 ? "delivered" : "sent" }
+            ? { ...m, id: msg.serverId, deliveryStatus: msg.delivered > 0 ? "delivered" as const : "sent" as const }
             : m
         ));
         break;
@@ -64,6 +67,7 @@ export default function App() {
         setUsers(msg.users || []);
         setMessages(prev => [...prev, {
           id: `sys_${Date.now()}`, type: "system",
+          userId: msg.userId, username: msg.username, room: currentRoom,
           content: `${msg.username} joined the room`,
           timestamp: new Date().toISOString(),
         }]);
@@ -74,6 +78,7 @@ export default function App() {
         setUsers(msg.users || []);
         setMessages(prev => [...prev, {
           id: `sys_${Date.now()}`, type: "system",
+          userId: msg.userId, username: msg.username, room: currentRoom,
           content: `${msg.username} left the room`,
           timestamp: new Date().toISOString(),
         }]);
@@ -97,39 +102,40 @@ export default function App() {
 
       default: break;
     }
-  }, []);
+  }, [currentRoom]);
 
-  const handleMetrics = useCallback((m) => setMetrics(m), []);
+  const handleMetrics = useCallback((m: Metrics) => setMetrics(m), []);
 
   const { state: connState, socketId, rtt, sendMessage, join, switchRoom, sendTyping } =
     useWebSocket({ onMessage: handleMessage, onMetrics: handleMetrics });
 
-  const handleJoin = useCallback((username, room) => {
+  const handleJoin = useCallback((username: string, room: RoomId) => {
     setMyUsername(username);
     join(username, room);
   }, [join]);
 
-  const handleSend = useCallback((content) => {
+  const handleSend = useCallback((content: string) => {
     const clientMsgId = genClientId();
     setMessages(prev => [...prev, {
+      id: clientMsgId,
       clientMsgId,
-      isMine        : true,
-      userId        : socketId,
-      username      : myUsername,
+      isMine: true,
+      userId: socketId ?? "",
+      username: myUsername ?? "",
       content,
-      room          : currentRoom,
-      timestamp     : new Date().toISOString(),
+      room: currentRoom,
+      timestamp: new Date().toISOString(),
       deliveryStatus: "sending",
     }]);
     sendMessage(content, clientMsgId);
   }, [socketId, myUsername, currentRoom, sendMessage]);
 
-  const handleRoomSwitch = useCallback((room) => {
+  const handleRoomSwitch = useCallback((room: RoomId) => {
     if (room === currentRoom) return;
     switchRoom(room);
   }, [currentRoom, switchRoom]);
 
-  const handleTyping = useCallback((isTyping) => {
+  const handleTyping = useCallback((isTyping: boolean) => {
     sendTyping(isTyping);
   }, [sendTyping]);
 

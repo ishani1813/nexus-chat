@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { formatUptime } from "../utils/helpers";
+import type { Metrics } from "../types";
 
 // ── Tiny sparkline (no lib needed) ────────────────────────────────────────────
-function Spark({ data, color, height = 40 }) {
+interface SparkProps {
+  data: number[];
+  color: string;
+  height?: number;
+}
+
+function Spark({ data, color, height = 40 }: SparkProps) {
   if (!data || data.length < 2) return null;
   const W = 200, H = height;
   const min = Math.min(...data), max = Math.max(...data) || 1;
@@ -21,12 +28,12 @@ function Spark({ data, color, height = 40 }) {
 }
 
 // ── Horizontal bar (bandwidth compare) ───────────────────────────────────────
-function BwBar({ raw, compressed }) {
+function BwBar({ raw, compressed }: { raw: number; compressed: number }) {
   const max = Math.max(raw, compressed, 1);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {[
-        { label: "Raw bandwidth",        val: raw,        color: "#888780" },
+        { label: "Raw bandwidth", val: raw, color: "#888780" },
         { label: "Compressed bandwidth", val: compressed, color: "#5b63f8" },
       ].map(({ label, val, color }) => (
         <div key={label}>
@@ -47,7 +54,7 @@ function BwBar({ raw, compressed }) {
 
 // ── Latency vs users scatter ──────────────────────────────────────────────────
 function LoadChart() {
-  const pts = [[0,12],[25,13],[50,15],[75,18],[100,22],[125,28],[150,36],[175,46],[200,55]];
+  const pts: [number, number][] = [[0, 12], [25, 13], [50, 15], [75, 18], [100, 22], [125, 28], [150, 36], [175, 46], [200, 55]];
   const W = 260, H = 100;
   const xMax = 200, yMax = 300;
   const path = pts.map(([u, l], i) => {
@@ -81,7 +88,16 @@ function LoadChart() {
 }
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, delta, accent, sparkData, sparkColor }) {
+interface KpiCardProps {
+  label: string;
+  value: string | number;
+  delta?: string;
+  accent?: string;
+  sparkData?: number[];
+  sparkColor?: string;
+}
+
+function KpiCard({ label, value, delta, accent, sparkData, sparkColor }: KpiCardProps) {
   return (
     <div style={{
       background: "rgba(255,255,255,0.04)",
@@ -97,7 +113,7 @@ function KpiCard({ label, value, delta, accent, sparkData, sparkColor }) {
 }
 
 // ── Chart card wrapper ────────────────────────────────────────────────────────
-function ChartCard({ title, children }) {
+function ChartCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div style={{
       background: "rgba(255,255,255,0.04)",
@@ -111,7 +127,14 @@ function ChartCard({ title, children }) {
 }
 
 // ── Resume bullet ─────────────────────────────────────────────────────────────
-function Bullet({ tag, tagColor, tagBg, text }) {
+interface BulletProps {
+  tag: string;
+  tagColor: string;
+  tagBg: string;
+  text: string;
+}
+
+function Bullet({ tag, tagColor, tagBg, text }: BulletProps) {
   return (
     <div style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
       <span style={{ fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 99, background: tagBg, color: tagColor, flexShrink: 0, alignSelf: "flex-start", marginTop: 1 }}>
@@ -123,16 +146,21 @@ function Bullet({ tag, tagColor, tagBg, text }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function MetricsDashboard({ metrics, onBack }) {
-  const [latHist,  setLatHist]  = useState(() => Array.from({ length: 20 }, () => 14 + Math.floor(Math.random() * 18)));
-  const [msgsHist, setMsgsHist] = useState(() => Array.from({ length: 12 }, () => Math.round(14000 + Math.random() * 5000)));
-  const [rawBw,    setRawBw]    = useState(48);
-  const [compBw,   setCompBw]   = useState(31);
+interface MetricsDashboardProps {
+  metrics: Metrics | null;
+  onBack: () => void;
+}
+
+export function MetricsDashboard({ metrics, onBack }: MetricsDashboardProps) {
+  const [latHist, setLatHist] = useState<number[]>(() => Array.from({ length: 20 }, () => 14 + Math.floor(Math.random() * 18)));
+  const [msgsHist, setMsgsHist] = useState<number[]>(() => Array.from({ length: 12 }, () => Math.round(14000 + Math.random() * 5000)));
+  const [rawBw, setRawBw] = useState(48);
+  const [compBw, setCompBw] = useState(31);
 
   useEffect(() => {
     const id = setInterval(() => {
       const lat = 12 + Math.floor(Math.random() * 20);
-      setLatHist(p  => [...p.slice(1), lat]);
+      setLatHist(p => [...p.slice(1), lat]);
       const r = Math.round(44 + Math.random() * 10);
       setRawBw(r); setCompBw(Math.round(r * 0.65));
       setMsgsHist(p => [...p.slice(1), Math.round(14000 + Math.random() * 5500)]);
@@ -140,9 +168,9 @@ export function MetricsDashboard({ metrics, onBack }) {
     return () => clearInterval(id);
   }, []);
 
-  const curLat  = latHist[latHist.length - 1];
+  const curLat = latHist[latHist.length - 1];
   const curMsgs = msgsHist[msgsHist.length - 1];
-  const msgsHr  = metrics?.msgsPerHour || Math.round(curMsgs * 6);
+  const msgsHr = metrics?.msgsPerHour || Math.round(curMsgs * 6);
 
   return (
     <div style={{
@@ -168,12 +196,12 @@ export function MetricsDashboard({ metrics, onBack }) {
 
       {/* KPI grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 14 }}>
-        <KpiCard label="Messages / hr"    value={msgsHr > 1000 ? `${Math.round(msgsHr/1000)}k` : msgsHr}    delta="↑ from baseline"    accent="#5b63f8" sparkData={msgsHist} sparkColor="#5b63f8" />
-        <KpiCard label="Avg latency"      value={`${metrics?.avgLatency || curLat}ms`}                        delta="↓ 120ms improved"   accent="#4caf7d" sparkData={latHist}  sparkColor="#4caf7d" />
-        <KpiCard label="Bandwidth saved"  value="35%"                                                          delta="↑ via compression"  accent="#7c6af7" />
-        <KpiCard label="Concurrent users" value={metrics?.connectedUsers || "—"}                               delta="Target: 200 users" />
-        <KpiCard label="Delivery rate"    value="99.8%"                                                        delta="✓ ACK confirmed" />
-        <KpiCard label="Page updates"     value="<250ms"                                                       delta="✓ Under load"       accent="#4caf7d" />
+        <KpiCard label="Messages / hr" value={msgsHr > 1000 ? `${Math.round(msgsHr / 1000)}k` : msgsHr} delta="↑ from baseline" accent="#5b63f8" sparkData={msgsHist} sparkColor="#5b63f8" />
+        <KpiCard label="Avg latency" value={`${metrics?.avgLatency || curLat}ms`} delta="↓ 120ms improved" accent="#4caf7d" sparkData={latHist} sparkColor="#4caf7d" />
+        <KpiCard label="Bandwidth saved" value="35%" delta="↑ via compression" accent="#7c6af7" />
+        <KpiCard label="Concurrent users" value={metrics?.connectedUsers ?? "—"} delta="Target: 200 users" />
+        <KpiCard label="Delivery rate" value="99.8%" delta="✓ ACK confirmed" />
+        <KpiCard label="Page updates" value="<250ms" delta="✓ Under load" accent="#4caf7d" />
       </div>
 
       {/* Charts row 1 */}
@@ -215,9 +243,9 @@ export function MetricsDashboard({ metrics, onBack }) {
           Resume bullets — what each chart proves
         </div>
         <Bullet tag="Compression" tagBg="rgba(124,106,247,0.15)" tagColor="#a5a9f7"
-          text={`Refactored WebSocket layer with <strong style="color:#e2e4ef">payload compression</strong>, decreasing bandwidth use by <strong style="color:#e2e4ef">${Math.round((1-compBw/rawBw)*100)}%</strong> and delivering page updates within <strong style="color:#e2e4ef">${curLat}ms</strong> under load.`} />
+          text={`Refactored WebSocket layer with <strong style="color:#e2e4ef">payload compression</strong>, decreasing bandwidth use by <strong style="color:#e2e4ef">${Math.round((1 - compBw / rawBw) * 100)}%</strong> and delivering page updates within <strong style="color:#e2e4ef">${curLat}ms</strong> under load.`} />
         <Bullet tag="Sessions" tagBg="rgba(76,175,61,0.12)" tagColor="#4caf7d"
-          text={`Concurrent session manager supports <strong style="color:#e2e4ef">200 simultaneous users</strong>, cutting avg latency by <strong style="color:#e2e4ef">120ms</strong> and raising delivery to <strong style="color:#e2e4ef">${Math.round(msgsHr/1000)}k messages/hr</strong>.`} />
+          text={`Concurrent session manager supports <strong style="color:#e2e4ef">200 simultaneous users</strong>, cutting avg latency by <strong style="color:#e2e4ef">120ms</strong> and raising delivery to <strong style="color:#e2e4ef">${Math.round(msgsHr / 1000)}k messages/hr</strong>.`} />
         <Bullet tag="Debugging" tagBg="rgba(91,99,248,0.12)" tagColor="#7c8af7"
           text={`Multi-layer debugging — <strong style="color:#e2e4ef">network</strong> RTT ping/pong, <strong style="color:#e2e4ef">API</strong> /metrics endpoint, <strong style="color:#e2e4ef">UI</strong> delivery ACKs with optimistic rendering & live status badges.`} />
       </div>

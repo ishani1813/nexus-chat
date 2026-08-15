@@ -1,6 +1,12 @@
 import { avatarColor, initials } from "../utils/helpers";
 
-export function Avatar({ username, size = 32, showDot = false }) {
+interface AvatarProps {
+  username: string;
+  size?: number;
+  showDot?: boolean;
+}
+
+export function Avatar({ username, size = 32, showDot = false }: AvatarProps) {
   const { bg, text } = avatarColor(username);
   return (
     <div style={{ position: "relative", flexShrink: 0, width: size, height: size }}>

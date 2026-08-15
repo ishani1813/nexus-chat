@@ -1,8 +1,14 @@
-import { useState } from "react";
 import { Avatar } from "./Avatar";
 import { ROOM_META, formatUptime } from "../utils/helpers";
+import type { ConnState, Metrics, RoomId, UserSummary } from "../types";
 
-function MetricPill({ label, value, accent }) {
+interface MetricPillProps {
+  label: string;
+  value: string | number;
+  accent?: string;
+}
+
+function MetricPill({ label, value, accent }: MetricPillProps) {
   return (
     <div style={{
       background: "rgba(255,255,255,0.04)",
@@ -19,12 +25,31 @@ function MetricPill({ label, value, accent }) {
   );
 }
 
+interface SidebarProps {
+  rooms: RoomId[];
+  currentRoom: RoomId;
+  onRoomSwitch: (room: RoomId) => void;
+  users: UserSummary[];
+  metrics: Metrics | null;
+  connState: ConnState;
+  rtt: number | null;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+const CONN_COLORS: Record<ConnState, string> = {
+  connected: "#4caf7d",
+  connecting: "#f0a500",
+  reconnecting: "#f0a500",
+  disconnected: "#e55",
+};
+
 export function Sidebar({
   rooms, currentRoom, onRoomSwitch,
   users, metrics, connState, rtt,
   mobileOpen, onMobileClose,
-}) {
-  const connColor = { connected:"#4caf7d", connecting:"#f0a500", reconnecting:"#f0a500", disconnected:"#e55" }[connState] || "#e55";
+}: SidebarProps) {
+  const connColor = CONN_COLORS[connState] || "#e55";
 
   const content = (
     <div style={{
@@ -64,7 +89,7 @@ export function Sidebar({
           Channels
         </div>
         {rooms.map(room => {
-          const meta   = ROOM_META[room] || { icon: "💬", desc: "" };
+          const meta = ROOM_META[room] || { icon: "💬", desc: "" };
           const active = room === currentRoom;
           return (
             <button key={room} onClick={() => { onRoomSwitch(room); onMobileClose?.(); }}
@@ -110,10 +135,10 @@ export function Sidebar({
             Live metrics
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-            <MetricPill label="Users"   value={metrics.connectedUsers}                          accent="#5b63f8" />
-            <MetricPill label="Latency" value={`${metrics.avgLatency || 0}ms`}                  accent="#4caf7d" />
-            <MetricPill label="Msgs/hr" value={metrics.msgsPerHour ? `${Math.round(metrics.msgsPerHour/1000)}k` : "—"} />
-            <MetricPill label="Compr."  value={`${metrics.compressionRatio || 35}%`}            accent="#7c6af7" />
+            <MetricPill label="Users" value={metrics.connectedUsers} accent="#5b63f8" />
+            <MetricPill label="Latency" value={`${metrics.avgLatency || 0}ms`} accent="#4caf7d" />
+            <MetricPill label="Msgs/hr" value={metrics.msgsPerHour ? `${Math.round(metrics.msgsPerHour / 1000)}k` : "—"} />
+            <MetricPill label="Compr." value={`${metrics.compressionRatio || 35}%`} accent="#7c6af7" />
           </div>
           {metrics.uptimeSeconds != null && (
             <div style={{ fontSize: 10, color: "#4b5063", textAlign: "center", marginTop: 8 }}>

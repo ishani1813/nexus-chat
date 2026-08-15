@@ -10,14 +10,25 @@
  *  • REST API: /api/health  /api/metrics  /api/rooms  /api/rooms/:id/history
  */
 
-const express = require("express");
-const http    = require("http");
-const WebSocket = require("ws");
-const cors   = require("cors");
-const { v4: uuidv4 } = require("uuid");
+import express, { type Request, type Response } from "express";
+import http from "http";
+import WebSocket from "ws";
+import cors from "cors";
+import { v4 as uuidv4 } from "uuid";
+
+import {
+  ROOMS,
+  type RoomId,
+  type ChatMessage,
+  type Session,
+  type Metrics,
+  type UserSummary,
+  type ClientMessage,
+  type ServerMessage,
+} from "./types";
 
 // ─── App & HTTP server ────────────────────────────────────────────────────────
-const app    = express();
+const app = express();
 const server = http.createServer(app);
 
 app.use(cors({ origin: "*" }));
@@ -27,86 +38,98 @@ app.use(express.json());
 const wss = new WebSocket.Server({
   server,
   perMessageDeflate: {
-    zlibDeflateOptions : { chunkSize: 1024, memLevel: 7, level: 3 },
-    zlibInflateOptions : { chunkSize: 10 * 1024 },
+    zlibDeflateOptions: { chunkSize: 1024, memLevel: 7, level: 3 },
+    zlibInflateOptions: { chunkSize: 10 * 1024 },
     clientNoContextTakeover: true,
     serverNoContextTakeover: true,
     serverMaxWindowBits: 10,
-    concurrencyLimit   : 10,
-    threshold          : 128,   // only compress payloads > 128 bytes
+    concurrencyLimit: 10,
+    threshold: 128, // only compress payloads > 128 bytes
   },
 });
 
-// ─── In-memory state ──────────────────────────────────────────────────────────
-const sessions       = new Map(); // socketId → { id, username, room, ws, connectedAt, msgCount }
-const rooms          = new Map(); // roomId   → Set<socketId>
-const messageHistory = new Map(); // roomId   → Message[]
+// Extend the socket with the heartbeat flag we attach to it.
+interface HeartbeatWebSocket extends WebSocket {
+  isAlive?: boolean;
+}
 
-const ROOMS = ["general", "engineering", "random", "design"];
+// ─── In-memory state ──────────────────────────────────────────────────────────
+const sessions = new Map<string, Session>(); // socketId → session
+const rooms = new Map<RoomId, Set<string>>(); // roomId   → Set<socketId>
+const messageHistory = new Map<RoomId, ChatMessage[]>(); // roomId → messages
+
 const MAX_HISTORY = 100;
 
-ROOMS.forEach(r => {
+ROOMS.forEach((r) => {
   rooms.set(r, new Set());
   messageHistory.set(r, []);
 });
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 const metrics = {
-  totalMessages       : 0,
+  totalMessages: 0,
   successfulDeliveries: 0,
-  failedDeliveries    : 0,
-  rawBytes            : 0,
-  compressedBytes     : 0,
-  latencySamples      : [],   // rolling window of 500
-  startTime           : Date.now(),
+  failedDeliveries: 0,
+  rawBytes: 0,
+  compressedBytes: 0,
+  latencySamples: [] as number[], // rolling window of 500
+  startTime: Date.now(),
 };
 
-function getMetrics() {
-  const uptimeMs  = Date.now() - metrics.startTime;
+function getMetrics(): Metrics {
+  const uptimeMs = Date.now() - metrics.startTime;
   const uptimeHrs = uptimeMs / 3_600_000;
-  const msgsPerHour = uptimeHrs > 0
-    ? Math.round(metrics.successfulDeliveries / uptimeHrs)
-    : 0;
-  const avgLatency = metrics.latencySamples.length > 0
-    ? Math.round(metrics.latencySamples.reduce((a, b) => a + b, 0) / metrics.latencySamples.length)
-    : 0;
-  const compressionRatio = metrics.rawBytes > 0
-    ? Math.round((1 - metrics.compressedBytes / metrics.rawBytes) * 100)
-    : 35;
+  const msgsPerHour =
+    uptimeHrs > 0 ? Math.round(metrics.successfulDeliveries / uptimeHrs) : 0;
+  const avgLatency =
+    metrics.latencySamples.length > 0
+      ? Math.round(
+          metrics.latencySamples.reduce((a, b) => a + b, 0) /
+            metrics.latencySamples.length
+        )
+      : 0;
+  const compressionRatio =
+    metrics.rawBytes > 0
+      ? Math.round((1 - metrics.compressedBytes / metrics.rawBytes) * 100)
+      : 35;
 
   return {
-    connectedUsers  : sessions.size,
-    activeRooms     : [...rooms.values()].filter(s => s.size > 0).length,
-    totalMessages   : metrics.totalMessages,
+    connectedUsers: sessions.size,
+    activeRooms: [...rooms.values()].filter((s) => s.size > 0).length,
+    totalMessages: metrics.totalMessages,
     successfulDeliveries: metrics.successfulDeliveries,
     failedDeliveries: metrics.failedDeliveries,
     msgsPerHour,
     avgLatency,
     compressionRatio,
-    uptimeSeconds   : Math.floor(uptimeMs / 1000),
+    uptimeSeconds: Math.floor(uptimeMs / 1000),
   };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function send(ws, payload) {
+function send(ws: WebSocket, payload: ServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
   }
 }
 
-function broadcast(roomId, payload, excludeId = null) {
+function broadcast(
+  roomId: RoomId,
+  payload: ServerMessage,
+  excludeId: string | null = null
+): number {
   const roomSet = rooms.get(roomId);
   if (!roomSet) return 0;
 
-  const data     = JSON.stringify(payload);
+  const data = JSON.stringify(payload);
   const rawBytes = Buffer.byteLength(data, "utf8");
-  metrics.rawBytes        += rawBytes;
+  metrics.rawBytes += rawBytes;
   metrics.compressedBytes += Math.round(rawBytes * 0.65); // perMessageDeflate ~35% saving
 
   let delivered = 0;
   const t0 = Date.now();
 
-  roomSet.forEach(sid => {
+  roomSet.forEach((sid) => {
     if (sid === excludeId) return;
     const session = sessions.get(sid);
     if (!session) return;
@@ -118,7 +141,7 @@ function broadcast(roomId, payload, excludeId = null) {
         metrics.successfulDeliveries++;
       } catch (err) {
         metrics.failedDeliveries++;
-        console.error(`[broadcast] send error to ${sid}:`, err.message);
+        console.error(`[broadcast] send error to ${sid}:`, (err as Error).message);
       }
     }
   });
@@ -131,23 +154,27 @@ function broadcast(roomId, payload, excludeId = null) {
   return delivered;
 }
 
-function getRoomUsers(roomId) {
+function getRoomUsers(roomId: RoomId): UserSummary[] {
   return [...(rooms.get(roomId) || [])]
-    .map(sid => sessions.get(sid))
-    .filter(Boolean)
+    .map((sid) => sessions.get(sid))
+    .filter((s): s is Session => Boolean(s))
     .map(({ id, username, connectedAt }) => ({ id, username, connectedAt }));
 }
 
-function pushHistory(roomId, message) {
+function pushHistory(roomId: RoomId, message: ChatMessage): void {
   const hist = messageHistory.get(roomId) || [];
   hist.push(message);
   if (hist.length > MAX_HISTORY) hist.shift();
   messageHistory.set(roomId, hist);
 }
 
+function isRoomId(value: unknown): value is RoomId {
+  return typeof value === "string" && (ROOMS as readonly string[]).includes(value);
+}
+
 // ─── WebSocket connection ─────────────────────────────────────────────────────
-wss.on("connection", ws => {
-  const socketId    = uuidv4();
+wss.on("connection", (ws: HeartbeatWebSocket) => {
+  const socketId = uuidv4();
   const connectedAt = new Date().toISOString();
   ws.isAlive = true;
 
@@ -157,19 +184,22 @@ wss.on("connection", ws => {
   send(ws, { type: "welcome", socketId, rooms: ROOMS, metrics: getMetrics() });
 
   // ── Message handler ─────────────────────────────────────────────────────────
-  ws.on("message", raw => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); }
-    catch { send(ws, { type: "error", message: "Invalid JSON" }); return; }
+  ws.on("message", (raw: WebSocket.RawData) => {
+    let msg: ClientMessage;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      send(ws, { type: "error", message: "Invalid JSON" });
+      return;
+    }
 
     const session = sessions.get(socketId);
 
     switch (msg.type) {
-
       // JOIN ──────────────────────────────────────────────────────────────────
       case "join": {
         const { username, room } = msg;
-        if (!username?.trim() || !ROOMS.includes(room)) {
+        if (!username?.trim() || !isRoomId(room)) {
           send(ws, { type: "error", message: "Invalid username or room" });
           return;
         }
@@ -185,8 +215,15 @@ wss.on("connection", ws => {
           });
         }
 
-        sessions.set(socketId, { id: socketId, ws, username: username.trim(), room, connectedAt, msgCount: 0 });
-        rooms.get(room).add(socketId);
+        sessions.set(socketId, {
+          id: socketId,
+          ws,
+          username: username.trim(),
+          room,
+          connectedAt,
+          msgCount: 0,
+        });
+        rooms.get(room)!.add(socketId);
 
         // Send history + room state to joiner
         send(ws, {
@@ -194,17 +231,21 @@ wss.on("connection", ws => {
           room,
           username: username.trim(),
           history: messageHistory.get(room) || [],
-          users  : getRoomUsers(room),
+          users: getRoomUsers(room),
           metrics: getMetrics(),
         });
 
         // Notify others
-        broadcast(room, {
-          type: "user_joined",
-          userId: socketId,
-          username: username.trim(),
-          users: getRoomUsers(room),
-        }, socketId);
+        broadcast(
+          room,
+          {
+            type: "user_joined",
+            userId: socketId,
+            username: username.trim(),
+            users: getRoomUsers(room),
+          },
+          socketId
+        );
 
         console.log(`[ws] ${username} joined #${room}  (sessions: ${sessions.size})`);
         break;
@@ -212,18 +253,21 @@ wss.on("connection", ws => {
 
       // MESSAGE ───────────────────────────────────────────────────────────────
       case "message": {
-        if (!session) { send(ws, { type: "error", message: "Join a room first" }); return; }
+        if (!session) {
+          send(ws, { type: "error", message: "Join a room first" });
+          return;
+        }
         const { content, clientMsgId } = msg;
         if (!content?.trim()) return;
 
-        const message = {
-          id          : uuidv4(),
-          clientMsgId : clientMsgId || null,
-          userId      : socketId,
-          username    : session.username,
-          room        : session.room,
-          content     : content.trim(),
-          timestamp   : new Date().toISOString(),
+        const message: ChatMessage = {
+          id: uuidv4(),
+          clientMsgId: clientMsgId || null,
+          userId: socketId,
+          username: session.username,
+          room: session.room,
+          content: content.trim(),
+          timestamp: new Date().toISOString(),
         };
 
         metrics.totalMessages++;
@@ -234,11 +278,11 @@ wss.on("connection", ws => {
 
         // ACK back to sender
         send(ws, {
-          type        : "message_ack",
-          clientMsgId : clientMsgId || null,
-          serverId    : message.id,
+          type: "message_ack",
+          clientMsgId: clientMsgId || null,
+          serverId: message.id,
           delivered,
-          timestamp   : message.timestamp,
+          timestamp: message.timestamp,
         });
         break;
       }
@@ -246,12 +290,16 @@ wss.on("connection", ws => {
       // TYPING ────────────────────────────────────────────────────────────────
       case "typing": {
         if (!session) return;
-        broadcast(session.room, {
-          type    : "typing",
-          userId  : socketId,
-          username: session.username,
-          isTyping: !!msg.isTyping,
-        }, socketId);
+        broadcast(
+          session.room,
+          {
+            type: "typing",
+            userId: socketId,
+            username: session.username,
+            isTyping: !!msg.isTyping,
+          },
+          socketId
+        );
         break;
       }
 
@@ -259,32 +307,36 @@ wss.on("connection", ws => {
       case "switch_room": {
         if (!session) return;
         const { room: newRoom } = msg;
-        if (!ROOMS.includes(newRoom) || newRoom === session.room) return;
+        if (!isRoomId(newRoom) || newRoom === session.room) return;
 
         rooms.get(session.room)?.delete(socketId);
         broadcast(session.room, {
-          type    : "user_left",
-          userId  : socketId,
+          type: "user_left",
+          userId: socketId,
           username: session.username,
-          users   : getRoomUsers(session.room),
+          users: getRoomUsers(session.room),
         });
 
         session.room = newRoom;
-        rooms.get(newRoom).add(socketId);
+        rooms.get(newRoom)!.add(socketId);
 
         send(ws, {
-          type   : "room_switched",
-          room   : newRoom,
+          type: "room_switched",
+          room: newRoom,
           history: messageHistory.get(newRoom) || [],
-          users  : getRoomUsers(newRoom),
+          users: getRoomUsers(newRoom),
         });
 
-        broadcast(newRoom, {
-          type    : "user_joined",
-          userId  : socketId,
-          username: session.username,
-          users   : getRoomUsers(newRoom),
-        }, socketId);
+        broadcast(
+          newRoom,
+          {
+            type: "user_joined",
+            userId: socketId,
+            username: session.username,
+            users: getRoomUsers(newRoom),
+          },
+          socketId
+        );
         break;
       }
 
@@ -295,7 +347,10 @@ wss.on("connection", ws => {
       }
 
       default:
-        send(ws, { type: "error", message: `Unknown type: ${msg.type}` });
+        send(ws, {
+          type: "error",
+          message: `Unknown type: ${(msg as ClientMessage).type}`,
+        });
     }
   });
 
@@ -305,28 +360,33 @@ wss.on("connection", ws => {
     if (session) {
       rooms.get(session.room)?.delete(socketId);
       broadcast(session.room, {
-        type    : "user_left",
-        userId  : socketId,
+        type: "user_left",
+        userId: socketId,
         username: session.username,
-        users   : getRoomUsers(session.room),
+        users: getRoomUsers(session.room),
       });
       console.log(`[ws] disconnect ${session.username}  (sessions: ${sessions.size - 1})`);
     }
     sessions.delete(socketId);
   });
 
-  ws.on("error", err => {
+  ws.on("error", (err: Error) => {
     console.error(`[ws] error ${socketId}:`, err.message);
     sessions.delete(socketId);
   });
 
-  ws.on("pong", () => { ws.isAlive = true; });
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
 });
 
 // ─── Heartbeat — cull dead connections every 30 s ────────────────────────────
 const heartbeat = setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) { ws.terminate(); return; }
+  wss.clients.forEach((ws: HeartbeatWebSocket) => {
+    if (!ws.isAlive) {
+      ws.terminate();
+      return;
+    }
     ws.isAlive = false;
     ws.ping();
   });
@@ -335,21 +395,25 @@ const heartbeat = setInterval(() => {
 wss.on("close", () => clearInterval(heartbeat));
 
 // ─── REST API ─────────────────────────────────────────────────────────────────
-app.get("/api/health", (_req, res) =>
-  res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/api/health", (_req: Request, res: Response) =>
+  res.json({ status: "ok", timestamp: new Date().toISOString() })
+);
 
-app.get("/api/metrics", (_req, res) => res.json(getMetrics()));
+app.get("/api/metrics", (_req: Request, res: Response) => res.json(getMetrics()));
 
-app.get("/api/rooms", (_req, res) =>
-  res.json(ROOMS.map(r => ({
-    id      : r,
-    users   : getRoomUsers(r).length,
-    messages: (messageHistory.get(r) || []).length,
-  }))));
+app.get("/api/rooms", (_req: Request, res: Response) =>
+  res.json(
+    ROOMS.map((r) => ({
+      id: r,
+      users: getRoomUsers(r).length,
+      messages: (messageHistory.get(r) || []).length,
+    }))
+  )
+);
 
-app.get("/api/rooms/:room/history", (req, res) => {
+app.get("/api/rooms/:room/history", (req: Request, res: Response) => {
   const { room } = req.params;
-  if (!ROOMS.includes(room)) return res.status(404).json({ error: "Room not found" });
+  if (!isRoomId(room)) return res.status(404).json({ error: "Room not found" });
   res.json(messageHistory.get(room) || []);
 });
 

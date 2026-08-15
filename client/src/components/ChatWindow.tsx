@@ -1,8 +1,9 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ROOM_META } from "../utils/helpers";
+import type { ChatMessage, ConnState, RoomId, TypingUser } from "../types";
 
-function TypingIndicator({ typingUsers }) {
+function TypingIndicator({ typingUsers }: { typingUsers: TypingUser[] }) {
   if (!typingUsers.length) return <div style={{ height: 22 }} />;
   const label = typingUsers.length === 1
     ? `${typingUsers[0].username} is typing…`
@@ -10,7 +11,7 @@ function TypingIndicator({ typingUsers }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 7, height: 22 }}>
       <div style={{ display: "flex", gap: 3 }}>
-        {[0,1,2].map(i => (
+        {[0, 1, 2].map(i => (
           <div key={i} style={{
             width: 5, height: 5, borderRadius: "50%", background: "#5b63f8",
             animation: `typingBounce 1.2s ease-in-out ${i * 0.15}s infinite`,
@@ -22,24 +23,35 @@ function TypingIndicator({ typingUsers }) {
   );
 }
 
+interface ChatWindowProps {
+  messages: ChatMessage[];
+  myId: string | null;
+  currentRoom: RoomId;
+  typingUsers: TypingUser[];
+  onSend: (content: string) => void;
+  onTyping: (isTyping: boolean) => void;
+  connState: ConnState;
+  onMenuOpen: () => void;
+}
+
 export function ChatWindow({
   messages, myId, currentRoom,
   typingUsers, onSend, onTyping,
   connState, onMenuOpen,
-}) {
-  const [input, setInput]       = useState("");
-  const [typing, setTyping]     = useState(false);
-  const bottomRef               = useRef(null);
-  const inputRef                = useRef(null);
-  const typingTimer             = useRef(null);
-  const meta                    = ROOM_META[currentRoom] || { icon: "💬", desc: "" };
-  const canSend                 = connState === "connected" && input.trim().length > 0;
+}: ChatWindowProps) {
+  const [input, setInput] = useState("");
+  const [typing, setTyping] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const meta = ROOM_META[currentRoom] || { icon: "💬", desc: "" };
+  const canSend = connState === "connected" && input.trim().length > 0;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleInput = useCallback((val) => {
+  const handleInput = useCallback((val: string) => {
     setInput(val);
     if (val.trim() && !typing) { setTyping(true); onTyping(true); }
     clearTimeout(typingTimer.current);
@@ -123,7 +135,11 @@ export function ChatWindow({
             value={input}
             onChange={e => handleInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
+            onInput={e => {
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 120) + "px";
+            }}
             placeholder={connState === "connected" ? `Message #${currentRoom}…` : "Connecting…"}
             disabled={connState !== "connected"}
             rows={1}
