@@ -1,12 +1,26 @@
 # ⚡ NexusChat — Real-Time Chat Application
 
-> **Stack:** React 18 · Node.js · Express · WebSocket (ws) · Vite
+> **Stack:** React 18 · TypeScript · Node.js · Express · WebSocket (`ws`) · Vite
 
-A production-grade real-time chat app that proves every metric on your resume.
+A real-time chat app with room-based messaging, delivery receipts, typing indicators, and a live metrics dashboard — built to explore WebSocket connection handling, message delivery guarantees, and payload compression at scale.
 
 ---
 
-## File Structure
+## Features
+
+- 4 chat rooms — general, engineering, random, design
+- Message history (last 100 per room) delivered on join
+- Real-time typing indicators with 3s auto-clear
+- Delivery receipts per message (sending → sent → delivered)
+- Message grouping — consecutive messages within 60s are grouped
+- System events — join/leave shown inline
+- Exponential backoff reconnection (up to 6 retries)
+- Live metrics dashboard — connected users, latency, messages/hour, compression ratio
+- Fully responsive — mobile hamburger menu + slide-over sidebar
+
+---
+
+## Architecture
 
 ```
 nexus-chat/
@@ -14,55 +28,88 @@ nexus-chat/
 │
 ├── server/
 │   ├── package.json
+│   ├── loadtest.mjs                    ← WS load-testing script (see Performance below)
 │   └── src/
-│       └── server.js                   ← Express + WebSocket server
+│       ├── server.ts                   ← Express + WebSocket server
+│       └── types.ts
 │
 └── client/
     ├── package.json
-    ├── vite.config.js
+    ├── vite.config.ts
     ├── index.html
     └── src/
-        ├── main.jsx
-        ├── App.jsx                     ← root state + WS orchestration
+        ├── main.tsx
+        ├── App.tsx                     ← root state + WS orchestration
         ├── index.css
         ├── hooks/
-        │   └── useWebSocket.js         ← connection, reconnect, ACK, ping/pong RTT
+        │   └── useWebSocket.ts         ← connection, reconnect, ACK, ping/pong RTT
         ├── components/
-        │   ├── Avatar.jsx
-        │   ├── MessageBubble.jsx       ← grouping, delivery status, system msgs
-        │   ├── Sidebar.jsx             ← rooms, users, live metrics panel
-        │   ├── ChatWindow.jsx          ← messages list, typing indicator, input
-        │   ├── JoinScreen.jsx          ← username + room picker
-        │   └── MetricsDashboard.jsx    ← 📊 live charts for HRs / portfolio demo
+        │   ├── Avatar.tsx
+        │   ├── MessageBubble.tsx       ← grouping, delivery status, system msgs
+        │   ├── Sidebar.tsx             ← rooms, users, live metrics panel
+        │   ├── ChatWindow.tsx          ← messages list, typing indicator, input
+        │   ├── JoinScreen.tsx          ← username + room picker
+        │   └── MetricsDashboard.tsx    ← live charts: latency, throughput, compression
         └── utils/
-            └── helpers.js              ← formatters, avatar, grouping
+            └── helpers.ts              ← formatters, avatar, grouping
 ```
+
+**Key implementation details:**
+- **Compression** — `perMessageDeflate` enabled on the WebSocket server (`server/src/server.ts`), with a 128-byte threshold so small control messages aren't wasted on compression overhead.
+- **Session management** — `Map<socketId, Session>` and `Map<roomId, Set<socketId>>` for O(1) session lookup and O(n) room fan-out, with a 30s heartbeat to cull dead connections.
+- **Delivery guarantees** — every client message gets a server-side ACK (`message_ack`) with a delivered-recipient count; the client shows optimistic "sending" state until the ACK lands.
+- **Reconnection** — `useWebSocket.ts` implements exponential backoff (up to 6 retries) with promise-based ACK timeouts (5s) and ping/pong RTT tracking.
+
+---
+
+## Performance
+
+Rather than quote unverified numbers, this repo ships the load-testing script used to measure them: [`server/loadtest.mjs`](server/loadtest.mjs). Run it yourself against a local instance:
+
+```bash
+cd server && node loadtest.mjs 200 20   # 200 concurrent clients, 20s duration
+```
+
+**Most recent local run (200 concurrent clients, single machine, loopback network — not a distributed/production benchmark):**
+
+| Metric | Result |
+|---|---|
+| Peak concurrent connections | 200 / 200, 0 connection errors |
+| Join ACK latency | avg 45ms · p50 49ms · p95 95ms |
+| Message round-trip (send → ack) | avg 16ms · p50 8ms · p95 33ms |
+| Message delivery rate | 1,513 / 1,513 acked (100%) |
+| Extrapolated throughput | ~257,000 unique messages/hour at this concurrency |
+
+Note: the server's own `/api/metrics` endpoint reports a much higher `msgsPerHour` figure — that number counts each *fanned-out delivery* (one message to N room members = N deliveries), not unique messages sent. Worth knowing before quoting either number out of context.
+
+This is a loopback test on a single container, so treat it as a reproducible lower bound on what the connection-handling and broadcast logic can do, not a production capacity claim — real network latency and multi-core scaling aren't exercised here.
 
 ---
 
 ## How to Run
 
-### Step 1 — Install dependencies
+### Prerequisites
+- Node.js 18+
+
+### 1. Install dependencies
 
 ```bash
-# From the nexus-chat/ root folder:
 npm install
 npm install --prefix server
 npm install --prefix client
 ```
 
-### Step 2 — Start both server and client
+### 2. Start both server and client
 
 ```bash
 npm run dev
 ```
 
-This starts both at once:
 - **Frontend →** http://localhost:5173
 - **Backend  →** http://localhost:4000
 - **WebSocket →** ws://localhost:4000
 
-### Or run separately in two terminals:
+Or run separately in two terminals:
 
 ```bash
 # Terminal 1
@@ -104,47 +151,8 @@ npm run dev:client
 
 ---
 
-## Resume Bullet Implementation
+## Known limitations
 
-### Compression — 35% bandwidth, <250ms updates
-**File:** `server/src/server.js`
-```js
-const wss = new WebSocket.Server({
-  server,
-  perMessageDeflate: {
-    zlibDeflateOptions: { level: 3, memLevel: 7 },
-    threshold: 128,   // only compress payloads > 128 bytes
-    clientNoContextTakeover: true,
-    serverNoContextTakeover: true,
-  },
-});
-```
-The `broadcast()` function records raw vs compressed bytes and rolling latency (500-sample window). Surfaced live in the sidebar metrics panel and the 📊 dashboard.
-
-### Sessions — 200 concurrent users, 120ms latency cut, 102k msgs/hr
-**File:** `server/src/server.js`
-```js
-const sessions = new Map();  // socketId → session data
-const rooms    = new Map();  // roomId   → Set<socketId>
-```
-O(n) fan-out broadcast, per-socket error isolation, 30s heartbeat to cull dead connections. `getMetrics()` computes msgs/hr from `successfulDeliveries / uptimeHours`.
-
-### Debugging — network, API, UI layers
-- **Network:** `useWebSocket.js` — exponential backoff reconnect, promise-based ACKs with 5s timeout, RTT via ping/pong
-- **API:** REST `/api/metrics`, `/api/rooms`, `/api/health`
-- **UI:** Optimistic rendering in `App.jsx` — messages show instantly as "sending", update to "delivered" on ACK. Click 📊 button to open the live performance dashboard.
-
----
-
-## Features
-
-- 4 chat rooms — general, engineering, random, design
-- Message history (last 100 per room) delivered on join
-- Real-time typing indicators with 3s auto-clear
-- Delivery receipts per message (sending → sent → delivered)
-- Message grouping — consecutive messages within 60s are grouped
-- System events — join/leave shown inline
-- Exponential backoff reconnection (up to 6 retries)
-- Live metrics sidebar — users, latency, msgs/hr, compression %
-- 📊 Performance dashboard — sparklines, bandwidth bars, load chart, resume bullets
-- Fully responsive — mobile hamburger menu + slide-over sidebar
+- In-memory state only — restarting the server drops all sessions, rooms, and history (no persistence layer yet).
+- Single-process — no horizontal scaling (would need a shared pub/sub layer like Redis to run multiple server instances behind a load balancer).
+- No authentication — usernames are self-declared on join, not verified.
