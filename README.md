@@ -1,5 +1,7 @@
 # ⚡ NexusChat — Real-Time Chat Application
 
+![CI](https://github.com/ishani1813/nexus-chat/actions/workflows/ci.yml/badge.svg)
+
 > **Stack:** React 18 · TypeScript · Node.js · Express · WebSocket (`ws`) · Vite
 
 A real-time chat app with room-based messaging, delivery receipts, typing indicators, and a live metrics dashboard — built to explore WebSocket connection handling, message delivery guarantees, and payload compression at scale.
