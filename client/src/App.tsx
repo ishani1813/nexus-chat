@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatWindow } from "./components/ChatWindow";
 import { MetricsDashboard } from "./components/MetricsDashboard";
 import { genClientId } from "./utils/helpers";
+import type { AuthResult } from "./utils/api";
 import type { ChatMessage, Metrics, RoomId, ServerMessage, TypingUser, UserSummary } from "./types";
 
 type Phase = "join" | "chat";
@@ -109,9 +110,9 @@ export default function App() {
   const { state: connState, socketId, rtt, sendMessage, join, switchRoom, sendTyping } =
     useWebSocket({ onMessage: handleMessage, onMetrics: handleMetrics });
 
-  const handleJoin = useCallback((username: string, room: RoomId) => {
-    setMyUsername(username);
-    join(username, room);
+  const handleJoin = useCallback((auth: AuthResult, room: RoomId) => {
+    setMyUsername(auth.user.username);
+    join(auth.token, room);
   }, [join]);
 
   const handleSend = useCallback((content: string) => {

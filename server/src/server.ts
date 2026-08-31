@@ -26,6 +26,10 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from "./types";
+import { createDb } from "./db";
+import { register, login, verifyToken, AuthError } from "./auth";
+
+const db = createDb();
 
 // ─── App & HTTP server ────────────────────────────────────────────────────────
 const app = express();
@@ -56,13 +60,15 @@ interface HeartbeatWebSocket extends WebSocket {
 // ─── In-memory state ──────────────────────────────────────────────────────────
 const sessions = new Map<string, Session>(); // socketId → session
 const rooms = new Map<RoomId, Set<string>>(); // roomId   → Set<socketId>
-const messageHistory = new Map<RoomId, ChatMessage[]>(); // roomId → messages
+// Message history now lives in SQLite (see db.ts) rather than in memory, so
+// it survives a server restart. In-memory state above is connection state,
+// which inherently can't survive a restart regardless (a restart drops every
+// live WebSocket), so there's nothing to persist there.
 
 const MAX_HISTORY = 100;
 
 ROOMS.forEach((r) => {
   rooms.set(r, new Set());
-  messageHistory.set(r, []);
 });
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
@@ -161,13 +167,6 @@ function getRoomUsers(roomId: RoomId): UserSummary[] {
     .map(({ id, username, connectedAt }) => ({ id, username, connectedAt }));
 }
 
-function pushHistory(roomId: RoomId, message: ChatMessage): void {
-  const hist = messageHistory.get(roomId) || [];
-  hist.push(message);
-  if (hist.length > MAX_HISTORY) hist.shift();
-  messageHistory.set(roomId, hist);
-}
-
 function isRoomId(value: unknown): value is RoomId {
   return typeof value === "string" && (ROOMS as readonly string[]).includes(value);
 }
@@ -198,11 +197,13 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
     switch (msg.type) {
       // JOIN ──────────────────────────────────────────────────────────────────
       case "join": {
-        const { username, room } = msg;
-        if (!username?.trim() || !isRoomId(room)) {
-          send(ws, { type: "error", message: "Invalid username or room" });
+        const { token, room } = msg;
+        const authUser = token ? verifyToken(token) : null;
+        if (!authUser || !isRoomId(room)) {
+          send(ws, { type: "error", message: "Invalid or missing token, or invalid room" });
           return;
         }
+        const username = authUser.username;
 
         // Leave old room
         if (session?.room) {
@@ -218,19 +219,19 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
         sessions.set(socketId, {
           id: socketId,
           ws,
-          username: username.trim(),
+          username,
           room,
           connectedAt,
           msgCount: 0,
         });
         rooms.get(room)!.add(socketId);
 
-        // Send history + room state to joiner
+        // Send history + room state to joiner (history now read from SQLite)
         send(ws, {
           type: "joined",
           room,
-          username: username.trim(),
-          history: messageHistory.get(room) || [],
+          username,
+          history: db.getRecentMessages(room, MAX_HISTORY),
           users: getRoomUsers(room),
           metrics: getMetrics(),
         });
@@ -241,7 +242,7 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
           {
             type: "user_joined",
             userId: socketId,
-            username: username.trim(),
+            username,
             users: getRoomUsers(room),
           },
           socketId
@@ -274,7 +275,7 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
         session.msgCount++;
 
         const delivered = broadcast(session.room, { type: "message", message });
-        pushHistory(session.room, message);
+        db.insertMessage(message);
 
         // ACK back to sender
         send(ws, {
@@ -323,7 +324,7 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
         send(ws, {
           type: "room_switched",
           room: newRoom,
-          history: messageHistory.get(newRoom) || [],
+          history: db.getRecentMessages(newRoom, MAX_HISTORY),
           users: getRoomUsers(newRoom),
         });
 
@@ -394,6 +395,31 @@ const heartbeat = setInterval(() => {
 
 wss.on("close", () => clearInterval(heartbeat));
 
+// ─── Auth API ───────────────────────────────────────────────────────────────
+app.post("/api/auth/register", async (req: Request, res: Response) => {
+  const { username, password } = req.body || {};
+  try {
+    const { user, token } = await register(db, username, password);
+    res.status(201).json({ user, token });
+  } catch (err) {
+    if (err instanceof AuthError) return res.status(400).json({ error: err.message });
+    console.error("[auth/register] error:", err);
+    res.status(500).json({ error: "Registration failed" });
+  }
+});
+
+app.post("/api/auth/login", async (req: Request, res: Response) => {
+  const { username, password } = req.body || {};
+  try {
+    const { user, token } = await login(db, username, password);
+    res.json({ user, token });
+  } catch (err) {
+    if (err instanceof AuthError) return res.status(401).json({ error: err.message });
+    console.error("[auth/login] error:", err);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
 // ─── REST API ─────────────────────────────────────────────────────────────────
 app.get("/api/health", (_req: Request, res: Response) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
@@ -406,7 +432,7 @@ app.get("/api/rooms", (_req: Request, res: Response) =>
     ROOMS.map((r) => ({
       id: r,
       users: getRoomUsers(r).length,
-      messages: (messageHistory.get(r) || []).length,
+      messages: db.getRecentMessages(r, MAX_HISTORY).length,
     }))
   )
 );
@@ -414,7 +440,7 @@ app.get("/api/rooms", (_req: Request, res: Response) =>
 app.get("/api/rooms/:room/history", (req: Request, res: Response) => {
   const { room } = req.params;
   if (!isRoomId(room)) return res.status(404).json({ error: "Room not found" });
-  res.json(messageHistory.get(room) || []);
+  res.json(db.getRecentMessages(room, MAX_HISTORY));
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
