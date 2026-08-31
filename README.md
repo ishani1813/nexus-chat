@@ -8,6 +8,21 @@ A real-time chat app with room-based messaging, delivery receipts, typing indica
 
 ---
 
+## Screenshots
+
+<table>
+<tr>
+<td><img src="screenshots/login.png" alt="Login screen" width="400"/></td>
+<td><img src="screenshots/signup.png" alt="Sign-up screen" width="400"/></td>
+</tr>
+<tr>
+<td><img src="screenshots/chat.png" alt="Chat interface" width="400"/></td>
+<td><img src="screenshots/dashboard.png" alt="Performance dashboard" width="400"/></td>
+</tr>
+</table>
+
+---
+
 ## Features
 
 - 4 chat rooms — general, engineering, random, design
