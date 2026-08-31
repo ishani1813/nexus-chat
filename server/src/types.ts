@@ -19,6 +19,11 @@ export interface UserSummary {
   connectedAt: string;
 }
 
+export interface AuthUser {
+  id: string;
+  username: string;
+}
+
 export interface Session {
   id: string;
   ws: WebSocket;
@@ -42,7 +47,7 @@ export interface Metrics {
 
 // ── Messages the client sends to the server ──────────────────────────────────
 export type ClientMessage =
-  | { type: "join"; username: string; room: RoomId }
+  | { type: "join"; token: string; room: RoomId }
   | { type: "message"; content: string; clientMsgId?: string }
   | { type: "typing"; isTyping?: boolean }
   | { type: "switch_room"; room: RoomId }

@@ -160,7 +160,7 @@ export function useWebSocket({ onMessage, onMetrics }: UseWebSocketArgs) {
   );
 
   const join = useCallback(
-    (username: string, room: string) => rawSend({ type: "join", username, room }),
+    (token: string, room: string) => rawSend({ type: "join", token, room }),
     [rawSend]
   );
   const switchRoom = useCallback(

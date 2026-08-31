@@ -1,26 +1,40 @@
 import { useState } from "react";
 import { ROOM_META } from "../utils/helpers";
+import { register, login, saveSession } from "../utils/api";
 import type { ConnState, RoomId } from "../types";
+import type { AuthResult } from "../utils/api";
 
 interface JoinScreenProps {
   rooms: RoomId[];
-  onJoin: (username: string, room: RoomId) => void;
+  onJoin: (auth: AuthResult, room: RoomId) => void;
   connState: ConnState;
 }
 
 export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [room, setRoom] = useState<RoomId>("general");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleJoin = () => {
-    const name = username.trim();
-    if (!name) { setError("Please enter a username."); return; }
-    if (name.length < 2) { setError("At least 2 characters."); return; }
-    if (name.length > 24) { setError("Max 24 characters."); return; }
+  const handleSubmit = async () => {
     if (connState !== "connected") { setError("Not connected yet — please wait."); return; }
+    if (!username.trim() || !password) { setError("Enter a username and password."); return; }
+
     setError("");
-    onJoin(name, room);
+    setSubmitting(true);
+    try {
+      const auth = mode === "login"
+        ? await login(username.trim(), password)
+        : await register(username.trim(), password);
+      saveSession(auth);
+      onJoin(auth, room);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const ready = connState === "connected";
@@ -53,7 +67,7 @@ export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
         <div style={{
           display: "flex", alignItems: "center", gap: 7,
           background: "rgba(255,255,255,0.04)",
-          borderRadius: 8, padding: "8px 12px", marginBottom: 24,
+          borderRadius: 8, padding: "8px 12px", marginBottom: 20,
         }}>
           <div style={{
             width: 7, height: 7, borderRadius: "50%",
@@ -65,8 +79,26 @@ export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
           </span>
         </div>
 
+        {/* Login / Register toggle */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, background: "rgba(255,255,255,0.04)", borderRadius: 9, padding: 4 }}>
+          {(["login", "register"] as const).map(m => (
+            <button
+              key={m}
+              onClick={() => { setMode(m); setError(""); }}
+              style={{
+                flex: 1, padding: "8px 0", borderRadius: 6, border: "none", cursor: "pointer",
+                background: mode === m ? "rgba(91,99,248,0.25)" : "transparent",
+                color: mode === m ? "#c2c6fb" : "#6b7280",
+                fontSize: 13, fontWeight: 600, transition: "all .15s",
+              }}
+            >
+              {m === "login" ? "Log in" : "Sign up"}
+            </button>
+          ))}
+        </div>
+
         {/* Username */}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 14 }}>
           <label style={{ display: "block", fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600, marginBottom: 7 }}>
             Username
           </label>
@@ -74,21 +106,32 @@ export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
             type="text"
             value={username}
             onChange={e => { setUsername(e.target.value); setError(""); }}
-            onKeyDown={e => e.key === "Enter" && handleJoin()}
-            placeholder="Your display name…"
-            maxLength={24}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+            placeholder={mode === "register" ? "3-20 letters, numbers, _" : "Your username…"}
+            maxLength={20}
             autoFocus
-            style={{
-              width: "100%", padding: "11px 14px",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 9, color: "#e2e4ef",
-              fontSize: 14, outline: "none",
-            }}
+            style={inputStyle}
             onFocus={e => e.target.style.borderColor = "rgba(91,99,248,0.55)"}
             onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
           />
-          {error && <p style={{ fontSize: 12, color: "#e55", marginTop: 5 }}>{error}</p>}
+        </div>
+
+        {/* Password */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600, marginBottom: 7 }}>
+            Password
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={e => { setPassword(e.target.value); setError(""); }}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+            placeholder={mode === "register" ? "At least 8 characters" : "Your password…"}
+            style={inputStyle}
+            onFocus={e => e.target.style.borderColor = "rgba(91,99,248,0.55)"}
+            onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+          />
+          {error && <p style={{ fontSize: 12, color: "#e55", marginTop: 7 }}>{error}</p>}
         </div>
 
         {/* Room picker */}
@@ -116,21 +159,21 @@ export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
           </div>
         </div>
 
-        {/* Join button */}
+        {/* Submit button */}
         <button
-          onClick={handleJoin}
-          disabled={!ready}
+          onClick={handleSubmit}
+          disabled={!ready || submitting}
           style={{
             width: "100%", padding: "13px",
             borderRadius: 10, border: "none",
-            background: ready ? "linear-gradient(135deg,#5b63f8,#7c6af7)" : "rgba(255,255,255,0.07)",
-            color: ready ? "#fff" : "#555",
+            background: ready && !submitting ? "linear-gradient(135deg,#5b63f8,#7c6af7)" : "rgba(255,255,255,0.07)",
+            color: ready && !submitting ? "#fff" : "#555",
             fontSize: 14, fontWeight: 600,
-            cursor: ready ? "pointer" : "not-allowed",
+            cursor: ready && !submitting ? "pointer" : "not-allowed",
             transition: "opacity .2s",
           }}
         >
-          {ready ? "Join channel →" : "Waiting for connection…"}
+          {!ready ? "Waiting for connection…" : submitting ? "Please wait…" : mode === "login" ? "Log in →" : "Create account →"}
         </button>
 
         <p style={{ fontSize: 11, color: "#3b3f52", textAlign: "center", marginTop: 16 }}>
@@ -140,3 +183,11 @@ export function JoinScreen({ rooms, onJoin, connState }: JoinScreenProps) {
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", padding: "11px 14px",
+  background: "rgba(255,255,255,0.05)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 9, color: "#e2e4ef",
+  fontSize: 14, outline: "none",
+};
