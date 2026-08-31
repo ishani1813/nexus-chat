@@ -97,7 +97,7 @@ function getMetrics(): Metrics {
   const compressionRatio =
     metrics.rawBytes > 0
       ? Math.round((1 - metrics.compressedBytes / metrics.rawBytes) * 100)
-      : 35;
+      : 0; // honest zero — no messages compressed yet, not an assumed/typical value
 
   return {
     connectedUsers: sessions.size,

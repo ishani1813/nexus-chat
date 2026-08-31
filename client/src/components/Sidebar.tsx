@@ -136,9 +136,9 @@ export function Sidebar({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
             <MetricPill label="Users" value={metrics.connectedUsers} accent="#5b63f8" />
-            <MetricPill label="Latency" value={`${metrics.avgLatency || 0}ms`} accent="#4caf7d" />
-            <MetricPill label="Msgs/hr" value={metrics.msgsPerHour ? `${Math.round(metrics.msgsPerHour / 1000)}k` : "—"} />
-            <MetricPill label="Compr." value={`${metrics.compressionRatio || 35}%`} accent="#7c6af7" />
+            <MetricPill label="Latency" value={`${metrics.avgLatency}ms`} accent="#4caf7d" />
+            <MetricPill label="Msgs/hr" value={metrics.msgsPerHour >= 1000 ? `${Math.round(metrics.msgsPerHour / 1000)}k` : metrics.msgsPerHour} />
+            <MetricPill label="Compr." value={`${metrics.compressionRatio}%`} accent="#7c6af7" />
           </div>
           {metrics.uptimeSeconds != null && (
             <div style={{ fontSize: 10, color: "#4b5063", textAlign: "center", marginTop: 8 }}>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { ConnState, Metrics, ServerMessage } from "../types";
 
-const WS_URL = "ws://localhost:4000";
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:4000";
 const MAX_RETRIES = 6;
 const RETRY_BASE_MS = 1000;
 const ACK_TIMEOUT_MS = 5000;
