@@ -139,7 +139,7 @@ npm run dev:client
 | Type | Direction | Description |
 |---|---|---|
 | `welcome` | S→C | Handshake — sends socketId + rooms |
-| `join` | C→S | Enter a room with username |
+| `join` | C→S | Enter a room with a valid auth token |
 | `joined` | S→C | ACK — sends history + users + metrics |
 | `message` | C→S | Send a chat message |
 | `message` | S→C | Broadcast to room |
@@ -153,8 +153,17 @@ npm run dev:client
 
 ---
 
+## Authentication & Persistence
+
+- **Auth** — `POST /api/auth/register` and `POST /api/auth/login` (bcrypt-hashed passwords, JWT issued on success). Joining a room over WebSocket requires a valid token; the server derives the username from the verified token, not from anything the client claims.
+- **Persistence** — message history is stored in SQLite (`server/data/nexus-chat.db`), not in memory. Restarting the server no longer drops chat history.
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/auth/register` | `{ username, password }` → `{ user, token }`. Username: 3-20 chars, letters/numbers/underscore. Password: 8+ chars. |
+| `POST /api/auth/login` | `{ username, password }` → `{ user, token }` |
+
 ## Known limitations
 
-- In-memory state only — restarting the server drops all sessions, rooms, and history (no persistence layer yet).
-- Single-process — no horizontal scaling (would need a shared pub/sub layer like Redis to run multiple server instances behind a load balancer).
-- No authentication — usernames are self-declared on join, not verified.
+- Single-process — no horizontal scaling yet (would need a shared pub/sub layer like Redis to run multiple server instances behind a load balancer).
+- Sessions/room membership (who's currently online) are still in-memory and don't survive a restart — a restart drops every live WebSocket connection regardless, so this one's inherent to any single-process server, not something a persistence layer alone fixes.
