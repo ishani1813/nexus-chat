@@ -2,14 +2,6 @@ import { useState, useEffect, type ReactNode } from "react";
 import { formatUptime } from "../utils/helpers";
 import type { Metrics } from "../types";
 
-// This dashboard only ever renders values that came from the server's real
-// getMetrics() (server/src/server.ts) — connectedUsers, avgLatency,
-// compressionRatio, successfulDeliveries/failedDeliveries, msgsPerHour,
-// uptimeSeconds. It arrives roughly every 15s via the WebSocket ping/pong
-// loop (see useWebSocket.ts). Nothing here is randomly generated or
-// hardcoded to a fixed "impressive" number — before the first metrics
-// snapshot arrives, cards show "—" rather than a placeholder guess.
-
 const HISTORY_LEN = 20;
 
 // ── Tiny sparkline (no lib needed) ────────────────────────────────────────────
@@ -93,17 +85,13 @@ export function MetricsDashboard({ metrics, onBack }: MetricsDashboardProps) {
   const [msgsHist, setMsgsHist] = useState<number[]>([]);
   const [compHist, setCompHist] = useState<number[]>([]);
 
-  // Push a new real sample only when a genuinely new metrics snapshot
-  // arrives from the server (every ~15s via ping/pong) — never on a timer
-  // of our own, and never with a fabricated value.
+
   useEffect(() => {
     if (!metrics) return;
     setLatHist(prev => [...prev.slice(-(HISTORY_LEN - 1)), metrics.avgLatency]);
     setMsgsHist(prev => [...prev.slice(-(HISTORY_LEN - 1)), metrics.msgsPerHour]);
     setCompHist(prev => [...prev.slice(-(HISTORY_LEN - 1)), metrics.compressionRatio]);
-    // metrics is a new object each time the server sends one, so this
-    // effect intentionally re-runs on every snapshot, not just on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [metrics]);
 
   const totalDeliveries = (metrics?.successfulDeliveries ?? 0) + (metrics?.failedDeliveries ?? 0);
