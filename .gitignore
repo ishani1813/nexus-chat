@@ -6,3 +6,6 @@ client/dist/
 server/dist/
 *.tsbuildinfo
 .env
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
