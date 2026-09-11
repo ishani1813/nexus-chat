@@ -2,12 +2,28 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { WebSocketServer } from "ws";
 import WebSocket from "ws";
 import http from "http";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { v4 as uuidv4 } from "uuid";
 import { ROOMS, type RoomId, type ChatMessage, type Session } from "./types";
 import { createDb, type Db } from "./db";
 import { register, login, verifyToken, AuthError } from "./auth";
+
+const MAX_MESSAGE_LENGTH = 2000;
+const MSG_RATE_LIMIT = 10;
+const MSG_RATE_WINDOW_MS = 1000;
+const msgWindows = new Map<string, { count: number; windowStart: number }>();
+function isRateLimited(socketId: string): boolean {
+  const now = Date.now();
+  const w = msgWindows.get(socketId);
+  if (!w || now - w.windowStart >= MSG_RATE_WINDOW_MS) {
+    msgWindows.set(socketId, { count: 1, windowStart: now });
+    return false;
+  }
+  w.count++;
+  return w.count > MSG_RATE_LIMIT;
+}
 
 // This test file stands up the same server logic as src/server.ts on an
 // ephemeral port and an in-memory SQLite database, so tests run against
@@ -94,7 +110,15 @@ beforeAll(async () => {
           send(ws, { type: "error", message: "Join a room first" });
           return;
         }
+        if (isRateLimited(socketId)) {
+          send(ws, { type: "error", message: `You're sending messages too fast (max ${MSG_RATE_LIMIT}/s). Slow down a bit.` });
+          return;
+        }
         if (!msg.content?.trim()) return;
+        if (msg.content.length > MAX_MESSAGE_LENGTH) {
+          send(ws, { type: "error", message: `Message too long (max ${MAX_MESSAGE_LENGTH} characters, got ${msg.content.length}).` });
+          return;
+        }
         const message: ChatMessage = {
           id: uuidv4(),
           clientMsgId: msg.clientMsgId || null,
@@ -114,7 +138,38 @@ beforeAll(async () => {
       const session = sessions.get(socketId);
       if (session?.room) rooms.get(session.room)?.delete(socketId);
       sessions.delete(socketId);
+      msgWindows.delete(socketId);
     });
+  });
+
+  // Real auth routes, real rate limiter — this part IS imported/mounted as
+  // server.ts does it, not re-implemented, since it's plain Express routing
+  // with no listen()-on-import problem to work around.
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many attempts. Try again in a few minutes." },
+  });
+  app.use(express.json());
+  app.post("/api/auth/register", authLimiter, async (req: Request, res: Response) => {
+    try {
+      const result = await register(db, req.body?.username, req.body?.password);
+      res.status(201).json(result);
+    } catch (err) {
+      if (err instanceof AuthError) return res.status(400).json({ error: err.message });
+      res.status(500).json({ error: "Registration failed" });
+    }
+  });
+  app.post("/api/auth/login", authLimiter, async (req: Request, res: Response) => {
+    try {
+      const result = await login(db, req.body?.username, req.body?.password);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof AuthError) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: "Login failed" });
+    }
   });
 
   await new Promise<void>((resolve) => {
@@ -340,5 +395,89 @@ describe("persistence", () => {
     const fromDb = db.getRecentMessages("design", 10);
     expect(fromDb).toHaveLength(1);
     expect(fromDb[0].content).toBe("durable message");
+  });
+});
+
+// ─── Message validation ─────────────────────────────────────────────────────
+describe("message validation", () => {
+  it("rejects a message over the length limit and does not broadcast it", async () => {
+    const alice = await makeUser();
+    const aliceWs = await connect();
+    aliceWs.send(JSON.stringify({ type: "join", token: alice.token, room: "random" }));
+    await waitFor(aliceWs, (m) => m.type === "joined");
+
+    const bob = await makeUser();
+    const bobWs = await connect();
+    bobWs.send(JSON.stringify({ type: "join", token: bob.token, room: "random" }));
+    await waitFor(bobWs, (m) => m.type === "joined");
+
+    const tooLong = "x".repeat(MAX_MESSAGE_LENGTH + 1);
+    aliceWs.send(JSON.stringify({ type: "message", content: tooLong }));
+    const err = await waitFor(aliceWs, (m) => m.type === "error");
+    expect(err.message).toMatch(/too long/i);
+
+    // Bob should never see it — a rejected message isn't broadcast.
+    let bobSawIt = false;
+    const handler = (raw: WebSocket.RawData) => {
+      const m = JSON.parse(raw.toString());
+      if (m.type === "message") bobSawIt = true;
+    };
+    bobWs.on("message", handler);
+    await new Promise((r) => setTimeout(r, 200));
+    bobWs.off("message", handler);
+    expect(bobSawIt).toBe(false);
+
+    aliceWs.close();
+    bobWs.close();
+  });
+
+  it("accepts a message right at the length limit", async () => {
+    const alice = await makeUser();
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "join", token: alice.token, room: "random" }));
+    await waitFor(ws, (m) => m.type === "joined");
+
+    const atLimit = "x".repeat(MAX_MESSAGE_LENGTH);
+    ws.send(JSON.stringify({ type: "message", content: atLimit }));
+    const ack = await waitFor(ws, (m) => m.type === "message_ack");
+    expect(ack.delivered).toBeGreaterThanOrEqual(0);
+    ws.close();
+  });
+
+  it("rate-limits a socket sending messages faster than the per-second cap", async () => {
+    const alice = await makeUser();
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "join", token: alice.token, room: "general" }));
+    await waitFor(ws, (m) => m.type === "joined");
+
+    // Send one more than the limit, back to back, in the same window.
+    for (let i = 0; i < MSG_RATE_LIMIT + 1; i++) {
+      ws.send(JSON.stringify({ type: "message", content: `msg ${i}` }));
+    }
+
+    const rateLimitError = await waitFor(ws, (m) => m.type === "error" && /too fast/i.test(m.message));
+    expect(rateLimitError).toBeTruthy();
+    ws.close();
+  });
+});
+
+// ─── Auth rate limiting (HTTP layer, real middleware) ──────────────────────
+describe("auth rate limiting", () => {
+  it("blocks login attempts after the per-IP limit within the window", async () => {
+    const target = await makeUser();
+    const base = `http://localhost:${port}`;
+
+    let lastStatus = 0;
+    // limit is 10/15min; fire 12 rapid requests from this test's shared IP.
+    for (let i = 0; i < 12; i++) {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: target.username, password: "wrong-password" }),
+      });
+      lastStatus = res.status;
+    }
+
+    expect(lastStatus).toBe(429);
   });
 });

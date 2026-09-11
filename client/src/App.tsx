@@ -22,8 +22,10 @@ export default function App() {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   const typingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
@@ -98,6 +100,16 @@ export default function App() {
         } else {
           setTypingUsers(prev => prev.filter(u => u.userId !== userId));
         }
+        break;
+      }
+
+      // Server-side rejections (message too long, sending too fast, etc.) —
+      // previously dropped silently; surfaced as a transient banner so the
+      // "your message vanished, why?" case actually has an answer on screen.
+      case "error": {
+        clearTimeout(errorTimer.current);
+        setErrorBanner(msg.message);
+        errorTimer.current = setTimeout(() => setErrorBanner(null), 4000);
         break;
       }
 
@@ -178,6 +190,18 @@ export default function App() {
             rtt={rtt}
             onMobileClose={() => setMobileSidebar(false)}
           />
+        </div>
+      )}
+
+      {/* ── Transient error banner (message too long, rate limited, etc.) ── */}
+      {errorBanner && (
+        <div style={{
+          position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+          zIndex: 200, background: "#dc2626", color: "#fff",
+          padding: "8px 16px", borderRadius: 8, fontSize: 13,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.2)", maxWidth: "90vw",
+        }}>
+          {errorBanner}
         </div>
       )}
 

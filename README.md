@@ -41,8 +41,9 @@ automatically.
 - Message grouping — consecutive messages within 60s are grouped
 - System events — join/leave shown inline
 - Exponential backoff reconnection (up to 6 retries)
-- Live metrics dashboard — connected users, latency, messages/hour, compression ratio
+- Live metrics dashboard — connected users, latency, messages/hour, compression ratio (measured live via `zlib.deflateRawSync` on each broadcast, not an assumed constant)
 - Fully responsive — mobile hamburger menu + slide-over sidebar
+- Basic abuse protections — 2,000-character message cap, 10 messages/sec per connection, and rate-limited auth endpoints (10 attempts/15 min/IP)
 
 ---
 
@@ -107,6 +108,8 @@ cd server && node loadtest.mjs 200 20   # 200 concurrent clients, 20s duration
 | Extrapolated throughput | ~257,000 unique messages/hour at this concurrency |
 
 Note: the server's own `/api/metrics` endpoint reports a much higher `msgsPerHour` figure — that number counts each *fanned-out delivery* (one message to N room members = N deliveries), not unique messages sent. Worth knowing before quoting either number out of context.
+
+The compression ratio shown on the dashboard is measured the same way: each broadcast payload is run through `zlib.deflateRawSync` with the same options the WebSocket server's `perMessageDeflate` uses, and the real compressed size is recorded. Earlier versions of this project assumed a fixed 35% saving instead of measuring it — that's fixed now.
 
 This is a loopback test on a single container, so treat it as a reproducible lower bound on what the connection-handling and broadcast logic can do, not a production capacity claim — real network latency and multi-core scaling aren't exercised here.
 

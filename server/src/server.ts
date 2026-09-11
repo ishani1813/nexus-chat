@@ -2,11 +2,14 @@
  * NexusChat — WebSocket Server
  * ─────────────────────────────
  * Features:
- *  • perMessageDeflate compression (35% bandwidth reduction)
+ *  • perMessageDeflate compression, with actual measured savings (not
+ *    assumed) fed into the live metrics dashboard
  *  • Concurrent session manager (200 simultaneous users)
  *  • Rolling latency window → avg latency metric
  *  • Delivery ACK per message with recipient count
  *  • Heartbeat (30 s ping/pong) to cull dead sockets
+ *  • Per-connection message rate limit + max message length
+ *  • Rate-limited auth endpoints (10 attempts / 15 min / IP)
  *  • REST API: /api/health  /api/metrics  /api/rooms  /api/rooms/:id/history
  */
 
@@ -14,6 +17,8 @@ import express, { type Request, type Response } from "express";
 import http from "http";
 import WebSocket from "ws";
 import cors from "cors";
+import zlib from "zlib";
+import rateLimit from "express-rate-limit";
 import { v4 as uuidv4 } from "uuid";
 
 import {
@@ -34,6 +39,11 @@ const db = createDb();
 // ─── App & HTTP server ────────────────────────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
+
+// Trust the first proxy hop (Render, and most single-proxy PaaS setups) so
+// req.ip reflects the real client IP rather than the proxy's — otherwise
+// the rate limiter below would bucket every user behind the same IP together.
+app.set("trust proxy", 1);
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -66,6 +76,24 @@ const rooms = new Map<RoomId, Set<string>>(); // roomId   → Set<socketId>
 // live WebSocket), so there's nothing to persist there.
 
 const MAX_HISTORY = 100;
+const MAX_MESSAGE_LENGTH = 2000; // characters
+const MSG_RATE_LIMIT = 10; // max chat messages per socket per window
+const MSG_RATE_WINDOW_MS = 1000;
+
+// Per-connection sliding-window counters for the WebSocket message rate limit.
+// Separate from `sessions` so a pre-join flood attempt is still throttled.
+const msgWindows = new Map<string, { count: number; windowStart: number }>();
+
+function isRateLimited(socketId: string): boolean {
+  const now = Date.now();
+  const w = msgWindows.get(socketId);
+  if (!w || now - w.windowStart >= MSG_RATE_WINDOW_MS) {
+    msgWindows.set(socketId, { count: 1, windowStart: now });
+    return false;
+  }
+  w.count++;
+  return w.count > MSG_RATE_LIMIT;
+}
 
 ROOMS.forEach((r) => {
   rooms.set(r, new Set());
@@ -130,7 +158,14 @@ function broadcast(
   const data = JSON.stringify(payload);
   const rawBytes = Buffer.byteLength(data, "utf8");
   metrics.rawBytes += rawBytes;
-  metrics.compressedBytes += Math.round(rawBytes * 0.65); // perMessageDeflate ~35% saving
+  // Actually measured, not assumed: deflate the same payload with the same
+  // options the WebSocket server's perMessageDeflate uses, and record the
+  // real compressed size. `ws` doesn't expose per-frame compressed byte
+  // counts from its internals, so this runs the identical algorithm
+  // out-of-band purely to get an honest number for the metrics/dashboard —
+  // it does not affect what's actually sent over the wire.
+  const compressed = zlib.deflateRawSync(data, { level: 3, memLevel: 7 });
+  metrics.compressedBytes += compressed.length;
 
   let delivered = 0;
   const t0 = Date.now();
@@ -258,8 +293,22 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
           send(ws, { type: "error", message: "Join a room first" });
           return;
         }
+        if (isRateLimited(socketId)) {
+          send(ws, {
+            type: "error",
+            message: `You're sending messages too fast (max ${MSG_RATE_LIMIT}/s). Slow down a bit.`,
+          });
+          return;
+        }
         const { content, clientMsgId } = msg;
         if (!content?.trim()) return;
+        if (content.length > MAX_MESSAGE_LENGTH) {
+          send(ws, {
+            type: "error",
+            message: `Message too long (max ${MAX_MESSAGE_LENGTH} characters, got ${content.length}).`,
+          });
+          return;
+        }
 
         const message: ChatMessage = {
           id: uuidv4(),
@@ -369,11 +418,13 @@ wss.on("connection", (ws: HeartbeatWebSocket) => {
       console.log(`[ws] disconnect ${session.username}  (sessions: ${sessions.size - 1})`);
     }
     sessions.delete(socketId);
+    msgWindows.delete(socketId);
   });
 
   ws.on("error", (err: Error) => {
     console.error(`[ws] error ${socketId}:`, err.message);
     sessions.delete(socketId);
+    msgWindows.delete(socketId);
   });
 
   ws.on("pong", () => {
@@ -396,7 +447,19 @@ const heartbeat = setInterval(() => {
 wss.on("close", () => clearInterval(heartbeat));
 
 // ─── Auth API ───────────────────────────────────────────────────────────────
-app.post("/api/auth/register", async (req: Request, res: Response) => {
+// Shared by both routes: 10 attempts per IP per 15 minutes. Applies to failed
+// *and* successful requests alike (simplest correct option — scoping it to
+// failures only would need a second, stateful counter keyed by username, which
+// is its own can of worms around enumeration).
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Try again in a few minutes." },
+});
+
+app.post("/api/auth/register", authLimiter, async (req: Request, res: Response) => {
   const { username, password } = req.body || {};
   try {
     const { user, token } = await register(db, username, password);
@@ -408,7 +471,7 @@ app.post("/api/auth/register", async (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/auth/login", async (req: Request, res: Response) => {
+app.post("/api/auth/login", authLimiter, async (req: Request, res: Response) => {
   const { username, password } = req.body || {};
   try {
     const { user, token } = await login(db, username, password);
