@@ -1,0 +1,33 @@
+# Render doesn't support variable interpolation directly inside envVars
+# values, so BACKEND_HOST is injected as a plain hostname (no scheme) and
+# turned into full wss:// / https:// URLs inside buildCommand instead, which
+# is a normal shell command and *does* expand env vars.
+services:
+  - type: web
+    name: nexuschat-backend
+    runtime: node
+    buildCommand: cd server && npm install && npm run build
+    startCommand: cd server && npm start
+    plan: free
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+
+  - type: web
+    name: nexuschat-frontend
+    runtime: static
+    buildCommand: >
+      cd client &&
+      npm install &&
+      VITE_WS_URL="wss://${BACKEND_HOST}" VITE_API_URL="https://${BACKEND_HOST}" npm run build
+    staticPublishPath: ./client/dist
+    envVars:
+      - key: BACKEND_HOST
+        fromService:
+          type: web
+          name: nexuschat-backend
+          property: host
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

@@ -8,6 +8,15 @@ A real-time chat app with room-based messaging, delivery receipts, typing indica
 
 ---
 
+## Live demo
+
+[Deploy your own copy on Render](https://render.com/deploy?repo=https://github.com/ishani1813/nexus-chat)
+using `render.yaml` (free tier, no credit card). Spins up the WebSocket
+backend and the static frontend as two services and wires them together
+automatically.
+
+---
+
 ## Screenshots
 
 <table>
@@ -182,3 +191,4 @@ npm run dev:client
 
 - Single-process — no horizontal scaling yet (would need a shared pub/sub layer like Redis to run multiple server instances behind a load balancer).
 - Sessions/room membership (who's currently online) are still in-memory and don't survive a restart — a restart drops every live WebSocket connection regardless, so this one's inherent to any single-process server, not something a persistence layer alone fixes.
+- On Render's free tier specifically, the SQLite file lives on ephemeral disk — persistent disks require a paid plan — so accounts and message history reset whenever the free-tier backend redeploys or spins down after inactivity. Fine for a demo, not for anything meant to keep data.
