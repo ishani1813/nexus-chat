@@ -114,7 +114,7 @@ The first run registers the bot users (bcrypt), so it starts slowly; that time i
 - Every message was acked, and every message reached every member of its room (e.g. 5,387 sent x 50 room members = 269,350 broadcasts received).
 - Delivery latency is measured at the receiving client from a timestamp embedded in the message.
 - Latency degrades at 400 clients on a single machine (p95 ~240 ms). I haven't isolated whether the server or the load generator is the limit.
-- `/api/metrics` `msgsPerHour` counts fan-out deliveries over server uptime, not unique messages, so it is not comparable to this table.
+- `/api/metrics` `msgsPerHour` counts unique messages over a rolling ~60 s window, extrapolated to an hour. `successfulDeliveries` counts fan-out copies (one message to N room members = N), and `avgLatency` is the server-side time in ms to fan a message out to its room, not network latency.
 - The test traffic is synthetic and repetitive, so the dashboard's compression ratio overstates real-world savings.
 
 ---

@@ -110,17 +110,35 @@ const metrics = {
   startTime: Date.now(),
 };
 
+// Rolling window of totalMessages samples, taken every 5s (~60s of history).
+const rateSamples: { t: number; n: number }[] = [];
+const rateTimer = setInterval(() => {
+  rateSamples.push({ t: Date.now(), n: metrics.totalMessages });
+  while (rateSamples.length > 13) rateSamples.shift();
+}, 5000);
+
+function rollingMsgsPerHour(): number {
+  if (rateSamples.length < 2) return 0;
+  const first = rateSamples[0];
+  const last = rateSamples[rateSamples.length - 1];
+  const hrs = (last.t - first.t) / 3_600_000;
+  return hrs > 0 ? Math.round((last.n - first.n) / hrs) : 0;
+}
+
 function getMetrics(): Metrics {
   const uptimeMs = Date.now() - metrics.startTime;
-  const uptimeHrs = uptimeMs / 3_600_000;
-  const msgsPerHour =
-    uptimeHrs > 0 ? Math.round(metrics.successfulDeliveries / uptimeHrs) : 0;
+  // Unique messages/hour, extrapolated from a rolling ~60s window (not
+  // fan-out deliveries, and not a lifetime average that decays when idle).
+  const msgsPerHour = rollingMsgsPerHour();
+  // Average server-side time (ms, 2 decimals) to fan one message out to its
+  // room. This is NOT network latency; it is how long the broadcast loop takes.
   const avgLatency =
     metrics.latencySamples.length > 0
       ? Math.round(
-          metrics.latencySamples.reduce((a, b) => a + b, 0) /
-            metrics.latencySamples.length
-        )
+          (metrics.latencySamples.reduce((a, b) => a + b, 0) /
+            metrics.latencySamples.length) *
+            100
+        ) / 100
       : 0;
   const compressionRatio =
     metrics.rawBytes > 0
@@ -168,7 +186,7 @@ function broadcast(
   metrics.compressedBytes += compressed.length;
 
   let delivered = 0;
-  const t0 = Date.now();
+  const t0 = performance.now();
 
   roomSet.forEach((sid) => {
     if (sid === excludeId) return;
@@ -188,7 +206,7 @@ function broadcast(
   });
 
   // Record latency sample
-  const latency = Date.now() - t0;
+  const latency = performance.now() - t0;
   metrics.latencySamples.push(latency);
   if (metrics.latencySamples.length > 500) metrics.latencySamples.shift();
 
@@ -445,6 +463,7 @@ const heartbeat = setInterval(() => {
 }, 30_000);
 
 wss.on("close", () => clearInterval(heartbeat));
+wss.on("close", () => clearInterval(rateTimer));
 
 // ─── Auth API ───────────────────────────────────────────────────────────────
 // Shared by both routes: 10 attempts per IP per 15 minutes. Applies to failed

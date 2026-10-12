@@ -124,7 +124,7 @@ export function MetricsDashboard({ metrics, onBack }: MetricsDashboardProps) {
       {/* KPI grid — every value below is metrics.<field> straight from the server, or "—" if not yet received */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 14 }}>
         <KpiCard label="Messages / hr" value={metrics ? metrics.msgsPerHour.toLocaleString() : "—"} sparkData={msgsHist} sparkColor="#5b63f8" />
-        <KpiCard label="Avg latency" value={metrics ? `${metrics.avgLatency}ms` : "—"} accent="#4caf7d" sparkData={latHist} sparkColor="#4caf7d" />
+        <KpiCard label="Fan-out time" value={metrics ? `${metrics.avgLatency}ms` : "—"} accent="#4caf7d" sparkData={latHist} sparkColor="#4caf7d" />
         <KpiCard label="Compression" value={metrics ? `${metrics.compressionRatio}%` : "—"} accent="#7c6af7" sparkData={compHist} sparkColor="#7c6af7" />
         <KpiCard label="Concurrent users" value={metrics?.connectedUsers ?? "—"} />
         <KpiCard label="Delivery rate" value={deliveryRate} />
