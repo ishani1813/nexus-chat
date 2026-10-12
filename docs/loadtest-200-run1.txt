@@ -1,0 +1,30 @@
+Getting tokens for 200 bot users (first run registers them)...
+Spawning 200 authenticated clients for 20s...
+
+=== LOAD TEST RESULTS (measured) ===
+Clients requested:          200
+Peak connected:             200
+Joined (got "joined"):      200
+Socket errors:              0
+Server error messages:      0
+Join latency (ms):          avg=120  p50=132  p95=162
+Ack RTT (ms):               avg=5.7  p50=5  p95=11  p99=39
+Delivery latency (ms):      avg=4.3  p50=3  p95=8  p99=34
+Messages sent / acked:      1297 / 1297
+Broadcast deliveries seen:  63553
+Wall time (s):              20.0
+Sustained unique msgs/hour: 233250
+Message types seen:         {"welcome":200,"joined":200,"user_joined":4900,"message":64850,"message_ack":1297}
+
+Server-reported /api/metrics:
+{
+  "connectedUsers": 200,
+  "activeRooms": 4,
+  "totalMessages": 2603,
+  "successfulDeliveries": 139950,
+  "failedDeliveries": 0,
+  "msgsPerHour": 1752551,
+  "avgLatency": 0,
+  "compressionRatio": 58,
+  "uptimeSeconds": 287
+}

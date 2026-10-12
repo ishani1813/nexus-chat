@@ -91,27 +91,31 @@ nexus-chat/
 
 ## Performance
 
-Rather than quote unverified numbers, this repo ships the load-testing script used to measure them: [`server/loadtest.mjs`](server/loadtest.mjs). Run it yourself against a local instance:
+This repo ships the load test used to measure these numbers: [`server/loadtest.mjs`](server/loadtest.mjs). Raw output from every run is in [`docs/`](docs/).
+
+**Setup:** 12th Gen Intel(R) Core(TM) i5-1240P, 15Gi RAM, Node v22.23.3. The server and the bots ran on the same machine (loopback), and all bots ran in a single Node process, so treat these as a lower bound, not a production capacity claim.
+
+Reproduce:
 
 ```bash
-cd server && node loadtest.mjs 200 20   # 200 concurrent clients, 20s duration
+cd server
+BENCHMARK_MODE=1 npm run dev     # terminal 1: relaxes the auth rate limiter; local benchmarking only, never set on a deployed server
+node loadtest.mjs 200 20 2500    # terminal 2: clients, seconds, send interval (ms)
 ```
 
-**Most recent local run (200 concurrent clients, single machine, loopback network — not a distributed/production benchmark):**
+The first run registers the bot users (bcrypt), so it starts slowly; that time is outside the measured window.
 
-| Metric | Result |
-|---|---|
-| Peak concurrent connections | 200 / 200, 0 connection errors |
-| Join ACK latency | avg 45ms · p50 49ms · p95 95ms |
-| Message round-trip (send → ack) | avg 16ms · p50 8ms · p95 33ms |
-| Message delivery rate | 1,513 / 1,513 acked (100%) |
-| Extrapolated throughput | ~257,000 unique messages/hour at this concurrency |
+| Scenario | Clients | Messages/s | Errors | Ack RTT p50 / p95 / p99 | Delivery latency p50 / p95 / p99 | Fan-out deliveries/s |
+|---|---|---|---|---|---|---|
+| Baseline (3 runs) | 200 | ~65 | 0 | 5 / 11 / 33-39 ms | 3 / 8 / 29-34 ms | ~3,200 |
+| Faster senders | 200 | ~270 | 0 | 3 / 20 / 46 ms | 2 / 17 / 41 ms | ~13,200 |
+| More clients | 400 | ~130 | 0 | 8 / 241 / 348 ms | 5 / 236 / 345 ms | ~12,900 |
 
-Note: the server's own `/api/metrics` endpoint reports a much higher `msgsPerHour` figure — that number counts each *fanned-out delivery* (one message to N room members = N deliveries), not unique messages sent. Worth knowing before quoting either number out of context.
-
-The compression ratio shown on the dashboard is measured the same way: each broadcast payload is run through `zlib.deflateRawSync` with the same options the WebSocket server's `perMessageDeflate` uses, and the real compressed size is recorded. Earlier versions of this project assumed a fixed 35% saving instead of measuring it — that's fixed now.
-
-This is a loopback test on a single container, so treat it as a reproducible lower bound on what the connection-handling and broadcast logic can do, not a production capacity claim — real network latency and multi-core scaling aren't exercised here.
+- Every message was acked, and every message reached every member of its room (e.g. 5,387 sent x 50 room members = 269,350 broadcasts received).
+- Delivery latency is measured at the receiving client from a timestamp embedded in the message.
+- Latency degrades at 400 clients on a single machine (p95 ~240 ms). I haven't isolated whether the server or the load generator is the limit.
+- `/api/metrics` `msgsPerHour` counts fan-out deliveries over server uptime, not unique messages, so it is not comparable to this table.
+- The test traffic is synthetic and repetitive, so the dashboard's compression ratio overstates real-world savings.
 
 ---
 

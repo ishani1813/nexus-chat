@@ -453,6 +453,7 @@ wss.on("close", () => clearInterval(heartbeat));
 // is its own can of worms around enumeration).
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
+  skip: () => process.env.BENCHMARK_MODE === "1",
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
