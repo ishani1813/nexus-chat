@@ -133,7 +133,7 @@ export function MetricsDashboard({ metrics, onBack }: MetricsDashboardProps) {
 
       {/* Charts */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12, marginBottom: 14 }}>
-        <ChartCard title="WebSocket latency over time (ms)">
+        <ChartCard title="Server fan-out time (ms)">
           {latHist.length >= 2 ? (
             <>
               <Spark data={latHist} color="#5b63f8" height={90} />
