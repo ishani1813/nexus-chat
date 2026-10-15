@@ -2,13 +2,13 @@
 
 ![CI](https://github.com/ishani1813/nexus-chat/actions/workflows/ci.yml/badge.svg)
 
-> **Stack:** React 18 · TypeScript · Node.js · Express · WebSocket (`ws`) · Vite
+> **Stack:** React 18 · TypeScript · Node.js · Express · WebSocket (`ws`) · Vite · SQLite (better-sqlite3) · JWT
 
-A real-time chat app with room-based messaging, delivery receipts, typing indicators, and a live metrics dashboard — built to explore WebSocket connection handling, message delivery guarantees, and payload compression at scale.
+A real-time chat app with room-based messaging, delivery receipts, typing indicators, and a live metrics dashboard — built to explore WebSocket connection handling, message delivery guarantees, and payload compression, with a reproducible load test (see [Performance](#performance)).
 
 ---
 
-## Live demo
+## Deploy
 
 [Deploy your own copy on Render](https://render.com/deploy?repo=https://github.com/ishani1813/nexus-chat)
 using `render.yaml` (free tier, no credit card). Spins up the WebSocket
@@ -41,7 +41,7 @@ automatically.
 - Message grouping — consecutive messages within 60s are grouped
 - System events — join/leave shown inline
 - Exponential backoff reconnection (up to 6 retries)
-- Live metrics dashboard — connected users, latency, messages/hour, compression ratio (measured live via `zlib.deflateRawSync` on each broadcast, not an assumed constant)
+- Live metrics dashboard — connected users, server fan-out time, messages/hour (rolling 60 s window), compression ratio (measured live via `zlib.deflateRawSync` on each broadcast, not an assumed constant)
 - Fully responsive — mobile hamburger menu + slide-over sidebar
 - Basic abuse protections — 2,000-character message cap, 10 messages/sec per connection, and rate-limited auth endpoints (10 attempts/15 min/IP)
 
@@ -57,7 +57,10 @@ nexus-chat/
 │   ├── package.json
 │   ├── loadtest.mjs                    ← WS load-testing script (see Performance below)
 │   └── src/
-│       ├── server.ts                   ← Express + WebSocket server
+│       ├── server.ts                   ← Express + WebSocket server, metrics
+│       ├── auth.ts                     ← register/login, bcrypt, JWT
+│       ├── db.ts                       ← SQLite setup (better-sqlite3)
+│       ├── server.test.ts              ← 19 integration tests (vitest)
 │       └── types.ts
 │
 └── client/
@@ -122,7 +125,7 @@ The first run registers the bot users (bcrypt), so it starts slowly; that time i
 ## How to Run
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+ (developed on Node 22)
 
 ### 1. Install dependencies
 
@@ -151,6 +154,17 @@ npm run dev:server
 # Terminal 2
 npm run dev:client
 ```
+
+---
+
+## Tests
+
+```bash
+cd server && npm test     # 19 integration tests (vitest)
+```
+
+`better-sqlite3` is a native module. After switching Node versions, run `npm rebuild better-sqlite3` in `server/`.
+The load test is described under [Performance](#performance).
 
 ---
 
@@ -199,3 +213,5 @@ npm run dev:client
 - Single-process — no horizontal scaling yet (would need a shared pub/sub layer like Redis to run multiple server instances behind a load balancer).
 - Sessions/room membership (who's currently online) are still in-memory and don't survive a restart — a restart drops every live WebSocket connection regardless, so this one's inherent to any single-process server, not something a persistence layer alone fixes.
 - On Render's free tier specifically, the SQLite file lives on ephemeral disk — persistent disks require a paid plan — so accounts and message history reset whenever the free-tier backend redeploys or spins down after inactivity. Fine for a demo, not for anything meant to keep data.
+- CORS is open (`origin: "*"`) for local development; restrict it to the frontend origin before a real deployment.
+- The load test runs the bots and the server on one machine, with all bots in a single Node process, so the latency increase at 400 clients may come from the load generator and not only the server.
